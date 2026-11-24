@@ -22,12 +22,12 @@ interface Scene {
   audioUrl?: string;
 }
 
-interface DataStoryProps {
+type DataStoryProps = {
   title: string;
   source: string;
   audioUrl?: string;
   scenes: Scene[];
-}
+};
 
 const BarChart: React.FC<{ data: ChartItem[]; frame: number; fps: number }> = ({
   data,
