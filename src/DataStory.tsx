@@ -285,7 +285,7 @@ export const DataStory: React.FC<DataStoryProps> = ({
     >
       {audioUrl && <Audio src={audioUrl} />}
 
-      <Sequence from={0} durationInFrames={introDuration}>
+      <Sequence durationInFrames={introDuration}>
         <AbsoluteFill
           style={{
             justifyContent: "center",
