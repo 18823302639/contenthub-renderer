@@ -93,3 +93,35 @@ jobs:
               assert colors > 5, name + " rendered blank"
               print(f"{name}: valid synthetic PNG {dimensions[0]}x{dimensions[1]}")
           PY
+      - name: Observe synthetic template timeline without changing source
+        run: |
+          set -euo pipefail
+          export REMOTION_DISABLE_TELEMETRY=1
+          work="$RENDERER_QA_DIR"
+          flags='{"no-sandbox":false,"disable-setuid-sandbox":false,"disable-namespace-sandbox":false,"disable-seccomp-filter-sandbox":false,"disable-gpu-sandbox":false,"single-process":false,"no-zygote":false}'
+          for comp in DataStory-16x9 DataStory-9x16; do
+            mkdir "$work/$comp-base" "$work/$comp-alt"
+            common=(--frames=20,35,175,240,269 --image-format=png '--image-sequence-pattern=frame-[frame].[ext]' --concurrency=1 --browser-executable="$work/sandboxed-chrome" --chrome-mode=chrome-for-testing --chromium-flags="$flags")
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-base" "${common[@]}"
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-alt" "${common[@]}" --props='{"title":"QA alternative title","source":"QA alternative source"}'
+          done
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, subprocess
+          root = pathlib.Path(os.environ["RENDERER_QA_DIR"])
+          number = re.compile(r"frame-(\d+)\.png")
+          def frames(dirname):
+              found = {int(number.fullmatch(p.name)[1]): p for p in dirname.glob("frame-*.png")}
+              assert set(found) == {20, 35, 175, 240, 269}, sorted(found)
+              return found
+          def image_hash(path):
+              return hashlib.sha256(subprocess.check_output(["convert", str(path), "-depth", "8", "rgb:-"])).hexdigest()
+          def channel_max(path):
+              return max(map(float, subprocess.check_output(["convert", str(path), "-format", "%[fx:maxima.r] %[fx:maxima.g] %[fx:maxima.b]", "info:"], text=True).split()))
+          for comp in ("DataStory-16x9", "DataStory-9x16"):
+              base, alt = frames(root / (comp + "-base")), frames(root / (comp + "-alt"))
+              title_changes_pixels = {f: image_hash(base[f]) != image_hash(alt[f]) for f in (20,35)}
+              source_changes_pixels = image_hash(base[175]) != image_hash(alt[175])
+              tail_identical = image_hash(base[240]) == image_hash(base[269])
+              tail_max = channel_max(base[240])
+              print(f"{comp}: early title changes pixels {title_changes_pixels}; source changes frame 175 pixels {source_changes_pixels}; tail 240 and 269 identical {tail_identical}; tail maximum RGB channel {tail_max:.3f}")
+          PY
