@@ -1,0 +1,95 @@
+name: Renderer template restore QA
+on:
+  push:
+    branches:
+      - qa-restore-715d9ff
+permissions:
+  contents: read
+concurrency:
+  group: renderer-restore-715d9ff
+  cancel-in-progress: true
+jobs:
+  restore:
+    if: github.repository == '18823302639/contenthub-renderer' && github.ref == 'refs/heads/qa-restore-715d9ff'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact template snapshot
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 715d9ff47d4523839782698d8186a5038b0b9873
+          persist-credentials: false
+      - name: Set up Node 24.22.3
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+      - name: Install exact dependencies, lint and bundle
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '715d9ff47d4523839782698d8186a5038b0b9873'
+          test ! -f .env
+          node --version
+          npm --version
+          export CI=true
+          export REMOTION_DISABLE_TELEMETRY=1
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run build
+          git diff --exit-code -- package.json package-lock.json
+      - name: Prepare official Noto CJK font and sandboxed browser
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          work="$(mktemp -d "$RUNNER_TEMP/renderer-synthetic.XXXXXX")"
+          echo "RENDERER_QA_DIR=$work" >> "$GITHUB_ENV"
+          (
+            cd "$work"
+            apt-get download 'fonts-noto-cjk=1:20220127+repack1-1'
+            deb="$(find . -maxdepth 1 -name 'fonts-noto-cjk_*_all.deb' -print -quit)"
+            test -n "$deb"
+            dpkg-deb -x "$deb" "$work/noto"
+          )
+          mkdir -p "$HOME/.local/share/fonts"
+          cp "$work/noto/usr/share/fonts/opentype/noto/"NotoSansCJK-*.ttc "$HOME/.local/share/fonts/"
+          fc-cache "$HOME/.local/share/fonts"
+          test "$(fc-match -f '%{family}' 'Noto Sans CJK SC')" = 'Noto Sans CJK SC'
+          command -v google-chrome
+          google-chrome --version
+          cat > "$work/sandboxed-chrome" <<'BROWSER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          for arg in "$@"; do
+            case "$arg" in
+              --no-sandbox*|--disable-setuid-sandbox*|--disable-namespace-sandbox*|--disable-seccomp-filter-sandbox*|--disable-gpu-sandbox*|--single-process*|--no-zygote*)
+                echo "Refusing to launch Chromium without its sandbox protections" >&2
+                exit 79
+                ;;
+            esac
+          done
+          exec google-chrome "$@"
+          BROWSER
+          chmod 0700 "$work/sandboxed-chrome"
+      - name: Render and validate three synthetic stills
+        run: |
+          set -euo pipefail
+          export REMOTION_DISABLE_TELEMETRY=1
+          work="$RENDERER_QA_DIR"
+          flags='{"no-sandbox":false,"disable-setuid-sandbox":false,"disable-namespace-sandbox":false,"disable-seccomp-filter-sandbox":false,"disable-gpu-sandbox":false,"single-process":false,"no-zygote":false}'
+          for comp in MyComposition DataStory-16x9 DataStory-9x16; do
+            npx --no-install remotion still src/index.ts "$comp" "$work/$comp.png" \
+              --frame=30 --image-format=png --browser-executable="$work/sandboxed-chrome" \
+              --chrome-mode=chrome-for-testing --chromium-flags="$flags"
+          done
+          python3 - <<'PY'
+          import os, pathlib, struct, subprocess
+          base = pathlib.Path(os.environ["RENDERER_QA_DIR"])
+          for name, dimensions in (("MyComposition", (1920, 1080)), ("DataStory-16x9", (1920, 1080)), ("DataStory-9x16", (1080, 1920))):
+              image = base / (name + ".png")
+              data = image.read_bytes()
+              assert len(data) > 1000 and data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR", name
+              assert struct.unpack(">II", data[16:24]) == dimensions, name
+              colors = int(subprocess.check_output(["identify", "-format", "%k", str(image)], text=True))
+              assert colors > 5, name + " rendered blank"
+              print(f"{name}: valid synthetic PNG {dimensions[0]}x{dimensions[1]}")
+          PY
