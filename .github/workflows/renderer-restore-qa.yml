@@ -17,7 +17,7 @@ jobs:
       - name: Check out exact timeline candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 8210e6d7c289525ffbe4fc05140ef6e9b34c9bfd
+          ref: cc76edd61b5913f686da5d9b9c667cf642ba3cd2
           persist-credentials: false
       - name: Set up Node 24.22.3
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -26,7 +26,7 @@ jobs:
       - name: Install exact dependencies, lint and bundle
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '8210e6d7c289525ffbe4fc05140ef6e9b34c9bfd'
+          test "$(git rev-parse HEAD)" = 'cc76edd61b5913f686da5d9b9c667cf642ba3cd2'
           test ! -f .env
           node --version
           npm --version
