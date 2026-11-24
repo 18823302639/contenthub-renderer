@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - name: Check out exact type-only candidate
+      - name: Check out exact timeline candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 423de3c897fb3d32293e27fa38ecf278baa12a45
+          ref: 8210e6d7c289525ffbe4fc05140ef6e9b34c9bfd
           persist-credentials: false
       - name: Set up Node 24.22.3
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -26,7 +26,7 @@ jobs:
       - name: Install exact dependencies, lint and bundle
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '423de3c897fb3d32293e27fa38ecf278baa12a45'
+          test "$(git rev-parse HEAD)" = '8210e6d7c289525ffbe4fc05140ef6e9b34c9bfd'
           test ! -f .env
           node --version
           npm --version
@@ -93,35 +93,51 @@ jobs:
               assert colors > 5, name + " rendered blank"
               print(f"{name}: valid synthetic PNG {dimensions[0]}x{dimensions[1]}")
           PY
-      - name: Observe synthetic template timeline without changing source
+      - name: Verify sequential timeline and fractional boundaries in both orientations
         run: |
           set -euo pipefail
-          export REMOTION_DISABLE_TELEMETRY=1
           work="$RENDERER_QA_DIR"
+          export REMOTION_DISABLE_TELEMETRY=1
+          export NO_COLOR=1
           flags='{"no-sandbox":false,"disable-setuid-sandbox":false,"disable-namespace-sandbox":false,"disable-seccomp-filter-sandbox":false,"disable-gpu-sandbox":false,"single-process":false,"no-zygote":false}'
+          browser=(--browser-executable="$work/sandboxed-chrome" --chrome-mode=chrome-for-testing --chromium-flags="$flags")
+          files=(--image-format=png '--image-sequence-pattern=frame-[frame].[ext]' --concurrency=1)
+          basic='{"title":"QA alternative title","source":"QA alternative source"}'
+          custom='{"title":"QA fractional title","source":"QA fractional source","scenes":[{"heading":"QA first","caption":"QA first caption","durationInSeconds":1.25,"chartData":[{"label":"A","value":50}]},{"heading":"QA second","caption":"QA second caption","durationInSeconds":0.77,"chartData":[{"label":"B","value":75}]}]}'
+          custom_alt="${custom//QA second/QA changed second}"
+          npx --no-install remotion compositions src/index.ts "${browser[@]}" > "$work/default-metadata.txt"
+          npx --no-install remotion compositions src/index.ts "${browser[@]}" --props="$custom" > "$work/custom-metadata.txt"
           for comp in DataStory-16x9 DataStory-9x16; do
-            mkdir "$work/$comp-base" "$work/$comp-alt"
-            common=(--frames=20,35,175,240,269 --image-format=png '--image-sequence-pattern=frame-[frame].[ext]' --concurrency=1 --browser-executable="$work/sandboxed-chrome" --chrome-mode=chrome-for-testing --chromium-flags="$flags")
-            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-base" "${common[@]}"
-            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-alt" "${common[@]}" --props='{"title":"QA alternative title","source":"QA alternative source"}'
+            mkdir "$work/$comp-base" "$work/$comp-alt" "$work/$comp-custom" "$work/$comp-custom-alt"
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-base" "${browser[@]}" "${files[@]}" --frames=20,35,59,60,175,209,210,240,269
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-alt" "${browser[@]}" "${files[@]}" --frames=20,35,59,60,175,209,210,240,269 --props="$basic"
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-custom" "${browser[@]}" "${files[@]}" --frames=20,59,60,90,97,98,100,120,121,145,180 --props="$custom"
+            npx --no-install remotion render src/index.ts "$comp" "$work/$comp-custom-alt" "${browser[@]}" "${files[@]}" --frames=20,59,60,90,97,98,100,120,121,145,180 --props="$custom_alt"
           done
           python3 - <<'PY'
-          import hashlib, os, pathlib, re, subprocess
+          import os, pathlib, re, subprocess
+          from hashlib import sha256
           root = pathlib.Path(os.environ["RENDERER_QA_DIR"])
-          number = re.compile(r"frame-(\d+)\.png")
+          signal = re.compile(r"frame-(\d+)\.png")
           def frames(dirname):
-              found = {int(number.fullmatch(p.name)[1]): p for p in dirname.glob("frame-*.png")}
-              assert set(found) == {20, 35, 175, 240, 269}, sorted(found)
-              return found
-          def image_hash(path):
-              return hashlib.sha256(subprocess.check_output(["convert", str(path), "-depth", "8", "rgb:-"])).hexdigest()
-          def channel_max(path):
+              return {int(signal.fullmatch(p.name)[1]): p for p in dirname.glob("frame-*.png")}
+          def hash_pixels(path):
+              return sha256(subprocess.check_output(["convert", str(path), "-depth", "8", "rgb:-"])).digest()
+          def rgb_maximum(path):
               return max(map(float, subprocess.check_output(["convert", str(path), "-format", "%[fx:maxima.r] %[fx:maxima.g] %[fx:maxima.b]", "info:"], text=True).split()))
-          for comp in ("DataStory-16x9", "DataStory-9x16"):
+          for comp, dims in (("DataStory-16x9","1920x1080"), ("DataStory-9x16","1080x1920")):
+              for f, count in (("default-metadata.txt",270), ("custom-metadata.txt",181)):
+                  assert re.search(rf"^\s*{comp}\s+30\s+{dims}\s+{count} \(", (root / f).read_text(), re.M), (comp, f)
               base, alt = frames(root / (comp + "-base")), frames(root / (comp + "-alt"))
-              title_changes_pixels = {f: image_hash(base[f]) != image_hash(alt[f]) for f in (20,35)}
-              source_changes_pixels = image_hash(base[175]) != image_hash(alt[175])
-              tail_identical = image_hash(base[240]) == image_hash(base[269])
-              tail_max = channel_max(base[240])
-              print(f"{comp}: early title changes pixels {title_changes_pixels}; source changes frame 175 pixels {source_changes_pixels}; tail 240 and 269 identical {tail_identical}; tail maximum RGB channel {tail_max:.3f}")
+              custom, changed = frames(root / (comp + "-custom")), frames(root / (comp + "-custom-alt"))
+              def equal(one, two, f):
+                  return hash_pixels(one[f]) == hash_pixels(two[f])
+              assert all(not equal(base, alt, f) for f in (20,35,59,240,269)), comp + " intro/outro text not visible"
+              assert all(equal(base, alt, f) for f in (60,175,209,210)), comp + " title/credit leaked across boundary"
+              assert all(rgb_maximum(base[f]) > 0.26 for f in (175,209,240,269)), comp + " content disappeared or left a blank tail"
+              assert all(equal(custom, changed, f) for f in (20,59,60,90,97,121,145,180)), comp + " scene 2 leaked across source-time boundary"
+              assert all(not equal(custom, changed, f) for f in (100,120)), comp + " scene 2 not visible before outro"
+              assert hash_pixels(custom[97]) != hash_pixels(custom[98]), comp + " fractional scene boundary did not advance"
+              assert rgb_maximum(custom[145]) > 0.26 and rgb_maximum(custom[180]) > 0.26, comp + " fractional timeline has blank tail"
+              print(f"{comp}: 270-frame default, 181-frame fractional, title before scenes, fractional scene switch 97→98, source credit to final frame")
           PY
