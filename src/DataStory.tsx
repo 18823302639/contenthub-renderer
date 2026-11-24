@@ -227,6 +227,30 @@ const SceneRenderer: React.FC<{
   );
 };
 
+const getTimeline = (scenes: Scene[], fps: number) => {
+  const introSeconds = 2;
+  const outroSeconds = 2;
+  const introDuration = introSeconds * fps;
+  const outroDuration = outroSeconds * fps;
+  let elapsedSeconds = 0;
+  let nextFrame = introDuration;
+  const sceneRanges = scenes.map((scene) => {
+    const start = nextFrame;
+    elapsedSeconds += scene.durationInSeconds;
+    // Round cumulative boundaries so fractional scenes stay contiguous and
+    // preserve the full, previously declared duration (including global audio).
+    nextFrame = Math.ceil((introSeconds + elapsedSeconds + outroSeconds) * fps) - outroDuration;
+    return { start, duration: nextFrame - start };
+  });
+  return {
+    introDuration,
+    sceneRanges,
+    outroStart: nextFrame,
+    outroDuration,
+    durationInFrames: nextFrame + outroDuration,
+  };
+};
+
 export const DataStory: React.FC<DataStoryProps> = ({
   title,
   source,
@@ -236,15 +260,7 @@ export const DataStory: React.FC<DataStoryProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  let currentFrame = 0;
-  const sceneRanges = scenes.map((scene) => {
-    const start = currentFrame;
-    const duration = scene.durationInSeconds * fps;
-    currentFrame += duration;
-    return { start, duration };
-  });
-
-  const introDuration = 2 * fps;
+  const { introDuration, sceneRanges, outroStart, outroDuration } = getTimeline(scenes, fps);
   const introOpacity = interpolate(
     frame,
     [0, 15, introDuration - 15, introDuration],
@@ -252,9 +268,6 @@ export const DataStory: React.FC<DataStoryProps> = ({
     { extrapolateRight: "clamp" }
   );
 
-  const totalContentFrames = currentFrame;
-  const outroStart = totalContentFrames;
-  const outroDuration = 2 * fps;
   const outroOpacity = interpolate(
     frame,
     [outroStart, outroStart + 15, outroStart + outroDuration - 15, outroStart + outroDuration],
@@ -272,29 +285,32 @@ export const DataStory: React.FC<DataStoryProps> = ({
     >
       {audioUrl && <Audio src={audioUrl} />}
 
-      <AbsoluteFill
-        style={{
-          justifyContent: "center",
-          alignItems: "center",
-          opacity: introOpacity,
-          pointerEvents: "none",
-        }}
-      >
-        <h1
+      <Sequence from={0} durationInFrames={introDuration}>
+        <AbsoluteFill
           style={{
-            fontSize: 72,
-            fontWeight: "bold",
-            color: "#e94560",
-            textAlign: "center",
-            lineHeight: 1.3,
+            justifyContent: "center",
+            alignItems: "center",
+            opacity: introOpacity,
+            pointerEvents: "none",
           }}
         >
-          {title}
-        </h1>
-      </AbsoluteFill>
+          <h1
+            style={{
+              fontSize: 72,
+              fontWeight: "bold",
+              color: "#e94560",
+              textAlign: "center",
+              lineHeight: 1.3,
+            }}
+          >
+            {title}
+          </h1>
+        </AbsoluteFill>
+      </Sequence>
 
       {scenes.map((scene, i) => {
         const { start, duration } = sceneRanges[i];
+        if (duration <= 0) return null;
         return (
           <Sequence key={i} from={start} durationInFrames={duration}>
             <SceneRenderer
@@ -331,14 +347,8 @@ export const DataStory: React.FC<DataStoryProps> = ({
 
 export const calculateMetadata = ({ props, defaultProps }: { props: DataStoryProps; defaultProps: DataStoryProps }) => {
   const data = props || defaultProps;
-  const totalSceneSeconds = data.scenes.reduce(
-    (sum, s) => sum + s.durationInSeconds,
-    0
-  );
-  const totalSeconds = 2 + totalSceneSeconds + 2;
-  const fps = 30;
   return {
-    durationInFrames: Math.ceil(totalSeconds * fps),
+    durationInFrames: getTimeline(data.scenes, 30).durationInFrames,
     props: data,
   };
 };
