@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - name: Check out exact template snapshot
+      - name: Check out exact type-only candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 715d9ff47d4523839782698d8186a5038b0b9873
+          ref: 423de3c897fb3d32293e27fa38ecf278baa12a45
           persist-credentials: false
       - name: Set up Node 24.22.3
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -26,7 +26,7 @@ jobs:
       - name: Install exact dependencies, lint and bundle
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = '715d9ff47d4523839782698d8186a5038b0b9873'
+          test "$(git rev-parse HEAD)" = '423de3c897fb3d32293e27fa38ecf278baa12a45'
           test ! -f .env
           node --version
           npm --version
